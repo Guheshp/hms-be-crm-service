@@ -22,5 +22,23 @@ const generatePaymentNumber = async () => {
 
   return `PAY${String(nextNumber).padStart(6, "0")}`;
 };
+const getPaymentMode = (method) => {
+  switch (method) {
+    case "upi":
+      return 1;
 
-module.exports = generatePaymentNumber;
+    case "card":
+      return 2;
+
+    case "netbanking":
+      return 3;
+
+    case "wallet":
+      return 4;
+
+    default:
+      return null;
+  }
+};
+
+module.exports = { generatePaymentNumber, getPaymentMode };

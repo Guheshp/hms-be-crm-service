@@ -580,6 +580,64 @@ const updateLeadStatus = async (req, res, next) => {
   }
 };
 
+const updateLeadWonStatus = async (req, res, next) => {
+  try {
+    const body = req.body;
+
+    if (!body.id) {
+      throw new AppError("Lead Id is required.", statusCode.BAD_REQUEST);
+    }
+
+    const leadid = body.id;
+
+    // Get Won status
+    const statusQuery = `
+      SELECT id
+      FROM leadstatus
+      WHERE
+        LOWER(name) = LOWER('Won')
+        AND status = 1
+      LIMIT 1;
+    `;
+
+    const statusResult = await db.runQuery(statusQuery);
+
+    if (!statusResult.rows.length) {
+      throw new AppError("Won lead status not found.", statusCode.NOT_FOUND);
+    }
+
+    const leadstatusid = statusResult.rows[0].id;
+
+    // Update lead status
+    const query = `
+      UPDATE leads
+      SET
+        leadstatusid = $1,
+        updatedat = $2
+      WHERE
+        id = $3
+        AND status = 1
+      RETURNING *;
+    `;
+
+    const values = [leadstatusid, Date.now(), leadid];
+
+    const { rows } = await db.runQuery(query, values);
+
+    if (!rows.length) {
+      throw new AppError("Lead not found.", statusCode.NOT_FOUND);
+    }
+
+    return res.status(statusCode.OK).json({
+      success: true,
+      message: "Lead status updated to Won successfully.",
+      data: rows[0],
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
 module.exports = {
   create,
   get,
@@ -587,4 +645,5 @@ module.exports = {
   update,
   deleteLead,
   updateLeadStatus,
+  updateLeadWonStatus,
 };

@@ -2,10 +2,11 @@ const db = require("../config/database");
 const { statusCode } = require("../constants/common");
 const { sendOnboardingMail } = require("../services/common/common");
 const AppError = require("../utils/appError");
-const generatePaymentNumber = require("../utils/payments");
+const { generatePaymentNumber, getPaymentMode } = require("../utils/payments");
 const crypto = require("crypto");
 
 const Razorpay = require("razorpay");
+const generateSubscriptionNumber = require("../utils/subscriptions");
 
 const razorpay = new Razorpay({
   key_id: process.env.RAZORPAY_KEY_ID,
@@ -30,11 +31,6 @@ const createOrder = async (req, res, next) => {
       amount: Math.round(totalAmount * 100),
       currency: "INR",
       receipt: `SUB_${Date.now()}`,
-
-      // Enable UPI
-      method: {
-        upi: true,
-      },
     };
 
     const order = await razorpay.orders.create(options);
@@ -49,6 +45,7 @@ const createOrder = async (req, res, next) => {
       },
     });
   } catch (error) {
+    console.error("Razorpay Create Order Error:", error);
     next(error);
   }
 };
@@ -217,7 +214,7 @@ const verifyPayment = async (req, res, next) => {
     }
 
     // --------------------------------
-    // 8. VERIFY ORDER AND PAYMENT AMOUNT
+    // 8. VERIFY ORDER/PAYMENT AMOUNT
     // --------------------------------
 
     if (Number(razorpayOrder.amount) !== Number(razorpayPayment.amount)) {
@@ -228,7 +225,7 @@ const verifyPayment = async (req, res, next) => {
     }
 
     // --------------------------------
-    // 9. VERIFY FRONTEND TOTAL AMOUNT
+    // 9. VERIFY SUBSCRIPTION AMOUNT
     // --------------------------------
 
     const expectedAmountInPaise = Math.round(subscriptionTotalAmount * 100);
@@ -263,11 +260,14 @@ const verifyPayment = async (req, res, next) => {
     }
 
     // --------------------------------
-    // 11. VALIDATE PLAN EXISTS
+    // 11. VALIDATE PLAN
     // --------------------------------
 
     const planQuery = `
-      SELECT id
+      SELECT
+        id,
+        price,
+        billingcycle
       FROM plans
       WHERE id = $1
         AND status = 1
@@ -280,8 +280,10 @@ const verifyPayment = async (req, res, next) => {
       throw new AppError("Plan not found.", statusCode.NOT_FOUND);
     }
 
+    const plan = planResult.rows[0];
+
     // --------------------------------
-    // 12. VALIDATE LEAD EXISTS
+    // 12. VALIDATE LEAD
     // --------------------------------
 
     const leadQuery = `
@@ -299,7 +301,20 @@ const verifyPayment = async (req, res, next) => {
     }
 
     // --------------------------------
-    // 13. CREATE SUBSCRIPTION
+    // 13. GET PAYMENT MODE
+    // --------------------------------
+
+    const paymentMode = getPaymentMode(razorpayPayment.method);
+
+    if (!paymentMode) {
+      throw new AppError(
+        `Unsupported payment mode: ${razorpayPayment.method}`,
+        statusCode.BAD_REQUEST,
+      );
+    }
+
+    // --------------------------------
+    // 14. CREATE SUBSCRIPTION
     // --------------------------------
 
     const subscriptionnumber = await generateSubscriptionNumber();
@@ -347,10 +362,10 @@ const verifyPayment = async (req, res, next) => {
       subscriptionTax,
       subscriptionTotalAmount,
 
-      // Subscription Status
-      1, // Active
+      // Subscription status
+      1,
 
-      // Record Status
+      // Record status
       1,
 
       now,
@@ -372,7 +387,7 @@ const verifyPayment = async (req, res, next) => {
     const createdSubscription = subscriptionResult.rows[0];
 
     // --------------------------------
-    // 14. CREATE PAYMENT
+    // 15. CREATE PAYMENT
     // --------------------------------
 
     const paymentnumber = await generatePaymentNumber();
@@ -405,27 +420,31 @@ const verifyPayment = async (req, res, next) => {
 
     const paymentValues = [
       paymentnumber,
-
       createdSubscription.id,
 
+      // Razorpay
       paymentGateway,
 
+      // Razorpay payment ID
       razorpay_payment_id,
 
+      // Amount
       subscriptionTotalAmount,
 
+      // Currency
       razorpayPayment.currency || "INR",
 
-      // Razorpay gives method like:
-      // card / upi / netbanking / wallet
-      razorpayPayment.method || "Online",
+      // IMPORTANT:
+      // Integer payment mode
+      paymentMode,
 
+      // Payment date
       now,
 
+      // Payment status
       1,
 
       now,
-
       now,
     ];
 
@@ -439,7 +458,7 @@ const verifyPayment = async (req, res, next) => {
     }
 
     // --------------------------------
-    // 15. RESPONSE
+    // 16. RESPONSE
     // --------------------------------
 
     return res.status(statusCode.CREATED).json({
@@ -575,18 +594,155 @@ const create = async (req, res, next) => {
 
 const get = async (req, res, next) => {
   try {
-    const query = `
-      SELECT *
-      FROM payments
-      WHERE status = 1
-      ORDER BY createdat DESC;
+    const body = req.body;
+
+    const page = Number(body.page) || 1;
+    const limit = Number(body.limit) || 10;
+    const offset = (page - 1) * limit;
+
+    const search = body.search ? `%${body.search}%` : null;
+
+    let whereClause = "WHERE p.status = 1";
+    const values = [];
+
+    // Filter by Subscription
+    if (body.subscriptionid) {
+      values.push(body.subscriptionid);
+
+      whereClause += `
+        AND p.subscriptionid = $${values.length}
+      `;
+    }
+
+    // Filter by Lead
+    if (body.leadid) {
+      values.push(body.leadid);
+
+      whereClause += `
+        AND s.leadid = $${values.length}
+      `;
+    }
+
+    // Search
+    if (search) {
+      values.push(search);
+
+      whereClause += `
+        AND (
+          p.paymentnumber ILIKE $${values.length}
+          OR p.transactionid ILIKE $${values.length}
+          OR p.paymentgateway ILIKE $${values.length}
+          OR p.paymentmode ILIKE $${values.length}
+          OR s.subscriptionnumber ILIKE $${values.length}
+          OR l.leadnumber ILIKE $${values.length}
+          OR l.hospitalname ILIKE $${values.length}
+          OR l.firstname ILIKE $${values.length}
+          OR l.lastname ILIKE $${values.length}
+          OR pl.name ILIKE $${values.length}
+        )
+      `;
+    }
+
+    const countQuery = `
+      SELECT COUNT(*) AS total
+      FROM payments p
+
+      LEFT JOIN subscriptions s
+        ON s.id = p.subscriptionid
+
+      LEFT JOIN leads l
+        ON l.id = s.leadid
+
+      LEFT JOIN plans pl
+        ON pl.id = s.planid
+
+      ${whereClause};
     `;
 
-    const { rows } = await db.runQuery(query);
+    const countResult = await db.runQuery(countQuery, values);
+
+    values.push(limit);
+    values.push(offset);
+
+    const query = `
+      SELECT
+        -- Payment Details
+        p.id,
+        p.paymentnumber,
+        p.subscriptionid,
+        p.paymentgateway,
+        p.transactionid,
+        p.amount,
+        p.currency,
+        p.paymentmode,
+        p.paymentdate,
+        p.status,
+        p.createdat,
+        p.updatedat,
+
+        -- Subscription Details
+        s.subscriptionnumber,
+        s.leadid,
+        s.organizationid,
+        s.planid,
+        s.billingcycle,
+        s.startdate,
+        s.enddate,
+        s.amount AS subscriptionamount,
+        s.discount,
+        s.tax,
+        s.totalamount,
+        s.subscriptionstatus,
+
+        -- Plan Details
+        pl.id AS planid,
+        pl.plancode,
+        pl.name AS planname,
+        pl.price AS planprice,
+        pl.description AS plandescription,
+
+        -- Lead Details
+        l.id AS leadid,
+        l.leadnumber,
+        l.hospitalname,
+        l.firstname,
+        l.lastname,
+        l.email AS leademail,
+        l.phone AS leadphone,
+        l.address AS leadaddress,
+        l.city AS leadcity,
+        l.pincode AS leadpincode
+
+      FROM payments p
+
+      LEFT JOIN subscriptions s
+        ON s.id = p.subscriptionid
+
+      LEFT JOIN plans pl
+        ON pl.id = s.planid
+
+      LEFT JOIN leads l
+        ON l.id = s.leadid
+
+      ${whereClause}
+
+      ORDER BY p.createdat DESC
+
+      LIMIT $${values.length - 1}
+      OFFSET $${values.length};
+    `;
+
+    const { rows } = await db.runQuery(query, values);
 
     return res.status(statusCode.OK).json({
       success: true,
       data: rows,
+      pagination: {
+        page,
+        limit,
+        totalRecords: Number(countResult.rows[0].total),
+        totalPages: Math.ceil(Number(countResult.rows[0].total) / limit),
+      },
     });
   } catch (error) {
     next(error);
