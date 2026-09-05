@@ -1,2 +1,5 @@
 # Dependencies
 node_modules/
+.early.coverage
+
+config/gcp-service-account.json

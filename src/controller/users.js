@@ -1,8 +1,13 @@
 const db = require("../config/database");
 const { statusCode } = require("../constants/common");
+const {
+  uploadProfileImage,
+  getFileSignedUrl,
+} = require("../services/common/gcp");
 const AppError = require("../utils/appError");
 const generateUserNumber = require("../utils/users");
 const bcrypt = require("bcrypt");
+const { createFile, updateFile } = require("./files");
 
 const create = async (req, res, next) => {
   try {
@@ -214,11 +219,21 @@ const getById = async (req, res, next) => {
     }
 
     const query = `
-      SELECT *
-      FROM users
+      SELECT
+        u.*,
+        f.filename,
+        f.originalname,
+        f.filepath,
+        f.bucketname,
+        f.mimetype,
+        f.filesize
+      FROM users u
+      LEFT JOIN files f
+        ON f.id = u.profilefileid
+        AND f.status = 1
       WHERE
-        id = $1
-        AND status = 1
+        u.id = $1
+        AND u.status = 1
       LIMIT 1;
     `;
 
@@ -230,9 +245,22 @@ const getById = async (req, res, next) => {
       throw new AppError("User not found.", statusCode.NOT_FOUND);
     }
 
+    const user = rows[0];
+
+    let profileimageurl = null;
+
+    if (user.filepath) {
+      profileimageurl = await getFileSignedUrl(user.filepath);
+    }
+
+    delete user.profileimage;
+
     return res.status(statusCode.OK).json({
       success: true,
-      data: rows[0],
+      data: {
+        ...user,
+        profileimageurl,
+      },
     });
   } catch (error) {
     next(error);
@@ -363,10 +391,117 @@ const deleteUser = async (req, res, next) => {
   }
 };
 
+const updateProfileImage = async (req, res, next) => {
+  try {
+    const { id } = req.body;
+
+    if (!id) {
+      throw new AppError("Id is required.", statusCode.BAD_REQUEST);
+    }
+
+    if (!req.file) {
+      throw new AppError("Profile image is required.", statusCode.BAD_REQUEST);
+    }
+
+    // Get user
+    const userQuery = `
+      SELECT
+        id,
+        profilefileid
+      FROM users
+      WHERE
+        id = $1
+        AND status = 1
+      LIMIT 1;
+    `;
+
+    const { rows: userRows } = await db.runQuery(userQuery, [id]);
+
+    if (!userRows.length) {
+      throw new AppError("User not found.", statusCode.NOT_FOUND);
+    }
+
+    const user = userRows[0];
+
+    // Upload / overwrite image in GCP
+    const uploadedFile = await uploadProfileImage(req.file, id);
+
+    let fileRecord;
+
+    // Check whether existing file actually exists
+    if (user.profilefileid) {
+      const fileQuery = `
+        SELECT *
+        FROM files
+        WHERE
+          id = $1
+          AND status = 1
+        LIMIT 1;
+      `;
+
+      const { rows: fileRows } = await db.runQuery(fileQuery, [
+        user.profilefileid,
+      ]);
+
+      if (fileRows.length) {
+        // Existing file -> update same record
+        fileRecord = await updateFile({
+          id: user.profilefileid,
+          filename: uploadedFile.filename,
+          originalname: uploadedFile.originalname,
+          filepath: uploadedFile.filepath,
+          bucketname: uploadedFile.bucketname,
+          mimetype: uploadedFile.mimetype,
+          filesize: uploadedFile.filesize,
+        });
+      }
+    }
+
+    // No valid existing file -> create new record
+    if (!fileRecord) {
+      fileRecord = await createFile({
+        filename: uploadedFile.filename,
+        originalname: uploadedFile.originalname,
+        filepath: uploadedFile.filepath,
+        bucketname: uploadedFile.bucketname,
+        mimetype: uploadedFile.mimetype,
+        filesize: uploadedFile.filesize,
+        storageprovider: "GCP",
+        createdby: id,
+      });
+
+      // Set the new file ID on user
+      await db.runQuery(
+        `
+          UPDATE users
+          SET
+            profilefileid = $1,
+            updatedat = $2
+          WHERE
+            id = $3
+            AND status = 1;
+        `,
+        [fileRecord.id, Date.now(), id],
+      );
+    }
+
+    return res.status(statusCode.OK).json({
+      success: true,
+      message: "Profile image updated successfully.",
+      data: {
+        file: fileRecord,
+      },
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
 module.exports = {
   create,
   get,
   getById,
   update,
   deleteUser,
+  updateProfileImage,
 };

@@ -7,6 +7,7 @@ const jwt = require("jsonwebtoken");
 const { sendMail } = require("../services/mail/mailService");
 const otpTemplate = require("../services/mail/templates/otp");
 const generateOtp = require("../utils/generateOtp");
+const { getFileSignedUrl } = require("../services/common/gcp");
 
 const login = async (req, res, next) => {
   try {
@@ -91,11 +92,16 @@ const verifyOtp = async (req, res, next) => {
     }
 
     const query = `
-      SELECT *
-      FROM users
+      SELECT
+        u.*,
+        f.filepath AS profilefilepath
+      FROM users u
+      LEFT JOIN files f
+        ON f.id = u.profilefileid
+        AND f.status = 1
       WHERE
-        email = $1
-        AND status = 1
+        u.email = $1
+        AND u.status = 1
       LIMIT 1;
     `;
 
@@ -157,17 +163,27 @@ const verifyOtp = async (req, res, next) => {
       [refreshToken, refreshTokenExpiry, now, now, user.id],
     );
 
+    let profileimageurl = null;
+
+    if (user.profilefilepath) {
+      profileimageurl = await getFileSignedUrl(user.profilefilepath);
+    }
+
     delete user.password;
     delete user.otp;
     delete user.otpexpiry;
     delete user.refreshtoken;
     delete user.refreshtokenexpiry;
+    delete user.profilefilepath;
 
     return res.status(statusCode.OK).json({
       success: true,
       message: "Login successful.",
       data: {
-        user,
+        user: {
+          ...user,
+          profileimageurl,
+        },
         accessToken,
         refreshToken,
       },

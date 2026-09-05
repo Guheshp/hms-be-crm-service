@@ -285,6 +285,7 @@ const get = async (req, res, next) => {
     next(error);
   }
 };
+
 const getById = async (req, res, next) => {
   try {
     const body = req.body;
@@ -638,6 +639,112 @@ const updateLeadWonStatus = async (req, res, next) => {
   }
 };
 
+const getCustomer = async (req, res, next) => {
+  try {
+    const body = req.body;
+
+    const page = Number(body.page) || 1;
+    const limit = Number(body.limit) || 10;
+    const offset = (page - 1) * limit;
+
+    const search = body.search ? `%${body.search}%` : null;
+
+    let whereClause = ` WHERE l.status = 1 AND ls.name = 'Won' `;
+    const values = [];
+
+    if (search) {
+      values.push(search);
+
+      whereClause += `
+  AND (
+    l.leadnumber ILIKE $${values.length}
+    OR l.hospitalname ILIKE $${values.length}
+    OR l.firstname ILIKE $${values.length}
+    OR l.lastname ILIKE $${values.length}
+    OR l.email ILIKE $${values.length}
+    OR l.phone ILIKE $${values.length}
+    OR l.city ILIKE $${values.length}
+  )
+`;
+    }
+
+    const countQuery = `
+  SELECT COUNT(*) AS total
+  FROM leads l
+  LEFT JOIN countries c
+    ON c.id = l.countryid
+  LEFT JOIN states s
+    ON s.id = l.stateid
+  LEFT JOIN leadstatus ls
+    ON ls.id = l.leadstatusid
+  LEFT JOIN users u
+    ON u.id = l.userid
+  LEFT JOIN users au
+    ON au.id = l.assignedby
+  ${whereClause};
+`;
+
+    const countResult = await db.runQuery(countQuery, values);
+
+    values.push(limit);
+    values.push(offset);
+
+    const query = `
+  SELECT
+    l.*,
+
+    c.name AS countryname,
+
+    s.name AS statename,
+
+    ls.name AS leadstatus,
+
+    u.firstname || ' ' || COALESCE(u.lastname, '') AS assignedto,
+
+    au.firstname || ' ' || COALESCE(au.lastname, '') AS assignedbyname
+
+  FROM leads l
+
+  LEFT JOIN countries c
+    ON c.id = l.countryid
+
+  LEFT JOIN states s
+    ON s.id = l.stateid
+
+  LEFT JOIN leadstatus ls
+    ON ls.id = l.leadstatusid
+
+  LEFT JOIN users u
+    ON u.id = l.userid
+
+  LEFT JOIN users au
+    ON au.id = l.assignedby
+
+  ${whereClause}
+
+  ORDER BY l.createdat DESC
+
+  LIMIT $${values.length - 1}
+  OFFSET $${values.length};
+`;
+
+    const { rows } = await db.runQuery(query, values);
+
+    return res.status(statusCode.OK).json({
+      success: true,
+      data: rows,
+      pagination: {
+        page,
+        limit,
+        totalRecords: Number(countResult.rows[0].total),
+        totalPages: Math.ceil(Number(countResult.rows[0].total) / limit),
+      },
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
 module.exports = {
   create,
   get,
@@ -646,4 +753,5 @@ module.exports = {
   deleteLead,
   updateLeadStatus,
   updateLeadWonStatus,
+  getCustomer,
 };

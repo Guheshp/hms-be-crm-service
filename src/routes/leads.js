@@ -12,6 +12,7 @@ const router = express.Router();
 router.post("/create", authenticate, controller.create);
 
 router.post("/get", authenticate, controller.get);
+router.post("/getcustomer", authenticate, controller.getCustomer);
 
 router.post("/getById", authenticate, controller.getById);
 
