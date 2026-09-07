@@ -1,13 +1,16 @@
 const db = require("../config/database");
 const { statusCode } = require("../constants/common");
 const AppError = require("../utils/appError");
+const generateNumber = require("../utils/leads");
 const generateLeadNumber = require("../utils/leads");
 
 const create = async (req, res, next) => {
   try {
     const body = req.body;
+
     console.log("req", req.user);
-    let leadnumber;
+
+    let number;
     let enquiryid;
     let hospitalname;
     let firstname;
@@ -27,7 +30,7 @@ const create = async (req, res, next) => {
     let expectedamount;
     let remarks;
 
-    leadnumber = await generateLeadNumber();
+    number = await generateNumber();
 
     if (Object.keys(body).includes("enquiryid") && body.enquiryid) {
       enquiryid = body.enquiryid;
@@ -130,13 +133,14 @@ const create = async (req, res, next) => {
       )
       VALUES
       (
-        $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22
+        $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,
+        $13,$14,$15,$16,$17,$18,$19,$20,$21,$22
       )
       RETURNING *;
     `;
 
     const values = [
-      leadnumber,
+      number,
       enquiryid,
       hospitalname,
       firstname,
@@ -159,6 +163,7 @@ const create = async (req, res, next) => {
       now,
       now,
     ];
+
     console.log(query, values);
 
     const { rows } = await db.runQuery(query, values);
@@ -190,7 +195,10 @@ const get = async (req, res, next) => {
 
     const search = body.search ? `%${body.search}%` : null;
 
-    let whereClause = "WHERE l.status = 1";
+    let whereClause = `
+      WHERE l.status = 1
+        AND LOWER(ls.name) != LOWER('Won')
+    `;
     const values = [];
 
     if (search) {

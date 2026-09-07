@@ -22,6 +22,8 @@ const paymentsRoutes = require("./src/routes/payments.js");
 const masterRoutes = require("./src/routes/master.js");
 const leadstatusRoutes = require("./src/routes/leadstatus.js");
 const dashboardRoutes = require("./src/routes/dashboard");
+const callsRoutes = require("./src/routes/calls");
+const leadFollowupsRoutes = require("./src/routes/leadfollowups");
 
 const app = express();
 const PORT = process.env.PORT || 3002;
@@ -63,6 +65,8 @@ app.use("/api/payments", paymentsRoutes);
 app.use("/api/master", masterRoutes);
 app.use("/api/leadstatus", leadstatusRoutes);
 app.use("/api/dashboard", dashboardRoutes);
+app.use("/api/calls", callsRoutes);
+app.use("/api/customerfollowups", leadFollowupsRoutes);
 
 /* ==========================
   Global Error Handler

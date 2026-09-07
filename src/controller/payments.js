@@ -1,6 +1,9 @@
 const db = require("../config/database");
 const { statusCode } = require("../constants/common");
-const { sendOnboardingMail } = require("../services/common/common");
+const {
+  sendOnboardingMail,
+  updateLeadWonStatus,
+} = require("../services/common/common");
 const AppError = require("../utils/appError");
 const { generatePaymentNumber, getPaymentMode } = require("../utils/payments");
 const crypto = require("crypto");
@@ -456,9 +459,14 @@ const verifyPayment = async (req, res, next) => {
         statusCode.INTERNAL_SERVER_ERROR,
       );
     }
+    // --------------------------------
+    // 16. UPDATE LEAD STATUS TO WON
+    // --------------------------------
+
+    const updatedLead = await updateLeadWonStatus(leadid);
 
     // --------------------------------
-    // 16. RESPONSE
+    // 17. RESPONSE
     // --------------------------------
 
     return res.status(statusCode.CREATED).json({

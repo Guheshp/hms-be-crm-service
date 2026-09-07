@@ -1,9 +1,10 @@
 const db = require("../config/database");
 
-const generateLeadNumber = async () => {
+const generateNumber = async () => {
   const query = `
     SELECT leadnumber
     FROM leads
+    WHERE leadnumber IS NOT NULL
     ORDER BY createdat DESC
     LIMIT 1;
   `;
@@ -11,16 +12,23 @@ const generateLeadNumber = async () => {
   const { rows } = await db.runQuery(query);
 
   if (!rows.length) {
-    return "LED000001";
+    return "000001";
   }
 
-  const lastNumber = rows[0].leadnumber;
+  const lastNumber = String(rows[0].number);
 
-  const number = parseInt(lastNumber.replace("LED", ""), 10);
+  // Remove any existing prefix such as LED
+  const numericPart = lastNumber.replace(/^[A-Za-z]+/, "");
+
+  const number = parseInt(numericPart, 10);
+
+  if (Number.isNaN(number)) {
+    return "000001";
+  }
 
   const nextNumber = number + 1;
 
-  return `LED${String(nextNumber).padStart(6, "0")}`;
+  return String(nextNumber).padStart(6, "0");
 };
 
-module.exports = generateLeadNumber;
+module.exports = generateNumber;
