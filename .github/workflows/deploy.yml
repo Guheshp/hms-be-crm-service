@@ -54,8 +54,6 @@ jobs:
         run: |
           gcloud compute ssh ${{ env.VM_NAME }} \
             --zone=${{ env.VM_ZONE }} \
-            --command="
-              sudo docker pull asia-south1-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/${{ env.IMAGE_NAME }}:latest &&
-              cd /root/app &&
-              sudo docker compose up -d backend
-            "
+          --command="
+          sudo docker pull asia-south1-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/${{ env.IMAGE_NAME }}:latest && sudo bash -c 'cd /root/app && docker compose up -d backend'
+          "
